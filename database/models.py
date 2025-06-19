@@ -1,42 +1,53 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Text, DateTime
-from sqlalchemy.orm import relationship
-from . import Base
+from datetime import datetime
+from typing import Optional, List
+
+from sqlalchemy import ForeignKey, String, Boolean, Text, DateTime, Integer
+from sqlalchemy.ext.asyncio import AsyncAttrs
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class Base(AsyncAttrs, DeclarativeBase):
+    """Базовый класс моделей с поддержкой асинхронных атрибутов"""
+    pass
+
 
 class User(Base):
-    __tablename__ = 'users'
+    __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    telegram_id = Column(Integer, unique=True, index=True)
-    username = Column(String, nullable=True)
-    full_name = Column(String, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(unique=True, index=True)
+    username: Mapped[Optional[str]] = mapped_column(String(64))
+    full_name: Mapped[Optional[str]] = mapped_column(String(128))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    quiz_results = relationship("QuizResult", back_populates="user")
+    quiz_results: Mapped[List["QuizResult"]] = relationship(back_populates="user")
 
 
 class Quiz(Base):
-    __tablename__ = 'quizzes'
+    __tablename__ = "quizzes"
 
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    description = Column(Text)
-    content = Column(Text)  # JSON или текстовое представление
-    is_active = Column(Boolean, default=True)
-    creator_id = Column(Integer, ForeignKey('users.id'))
-    created_at = Column(DateTime, index=True)
-    updated_at = Column(DateTime, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(100), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text)  # JSON или текстовое представление
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    creator_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    results = relationship("QuizResult", back_populates="quiz")
+    results: Mapped[List["QuizResult"]] = relationship(back_populates="quiz")
+    creator: Mapped["User"] = relationship(back_populates="created_quizzes")
 
 
 class QuizResult(Base):
-    __tablename__ = 'quiz_results'
+    __tablename__ = "quiz_results"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id'))
-    quiz_id = Column(Integer, ForeignKey('quizzes.id'))
-    score = Column(Integer)
-    total_questions = Column(Integer)
-    completed_at = Column(String)  # Можно использовать DateTime при наличии timezone
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    quiz_id: Mapped[int] = mapped_column(ForeignKey("quizzes.id"))
+    score: Mapped[int] = mapped_column(Integer)
+    total_questions: Mapped[int] = mapped_column(Integer)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    user = relationship("User", back_populates="quiz_results")
-    quiz = relationship("Quiz", back_populates="results")
+    user: Mapped["User"] = relationship(back_populates="quiz_results")
+    quiz: Mapped["Quiz"] = relationship(back_populates="results")

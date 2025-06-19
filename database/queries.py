@@ -1,63 +1,93 @@
 from datetime import datetime
+from typing import List, Optional
 
-from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from .models import User, Quiz, QuizResult
 
 
-def get_or_create_user(db: Session, telegram_id: int, username: str = None, full_name: str = None) -> User:
+async def get_or_create_user(
+        db: AsyncSession,
+        telegram_id: int,
+        username: Optional[str] = None,
+        full_name: Optional[str] = None
+) -> User:
     """Получает или создает пользователя"""
     stmt = select(User).where(User.telegram_id == telegram_id)
-    user = db.scalars(stmt).first()
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
 
-    if not user:
+    if user:
+        if username and user.username != username:
+            user.username = username
+        if full_name and user.full_name != full_name:
+            user.full_name = full_name
+        await db.commit()
+    else:
         user = User(
             telegram_id=telegram_id,
             username=username,
             full_name=full_name
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
+
     return user
 
 
-def create_quiz(db: Session, title: str, description: str, content: str, creator_id: int) -> Quiz:
+async def create_quiz(
+        db: AsyncSession,
+        title: str,
+        description: str,
+        content: str,
+        creator_id: int
+) -> Quiz:
     """Создает новый квиз"""
     quiz = Quiz(
         title=title,
         description=description,
         content=content,
-        creator_id=creator_id,
-        created_at=datetime.now()
+        creator_id=creator_id
     )
     db.add(quiz)
-    db.commit()
-    db.refresh(quiz)
+    await db.commit()
+    await db.refresh(quiz)
     return quiz
 
 
-def get_active_quizzes(db: Session) -> list[Quiz]:
-    """Возвращает список активных квизов"""
-    stmt = select(Quiz).where(Quiz.is_active == True)
-    return db.scalars(stmt).all()
+async def get_active_quizzes(db: AsyncSession) -> List[Quiz]:
+    """Возвращает активные квизы"""
+    stmt = (
+        select(Quiz)
+        .where(Quiz.is_active == True)
+        .options(selectinload(Quiz.creator))
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
 
-def get_quiz_by_id(db: Session, quiz_id: int) -> Quiz | None:
+async def get_quiz_by_id(db: AsyncSession, quiz_id: int) -> Optional[Quiz]:
     """Находит квиз по ID"""
-    stmt = select(Quiz).where(Quiz.id == quiz_id)
-    return db.scalars(stmt).first()
+    stmt = (
+        select(Quiz)
+        .where(Quiz.id == quiz_id)
+        .options(selectinload(Quiz.creator))
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
 
 
-def save_quiz_result(
-        db: Session,
+async def save_quiz_result(
+        db: AsyncSession,
         user_id: int,
         quiz_id: int,
         score: int,
         total_questions: int
 ) -> QuizResult:
-    """Сохраняет результат прохождения квиза"""
+    """Сохраняет результат квиза"""
     result = QuizResult(
         user_id=user_id,
         quiz_id=quiz_id,
@@ -66,29 +96,49 @@ def save_quiz_result(
         completed_at=datetime.now()
     )
     db.add(result)
-    db.commit()
-    db.refresh(result)
+    await db.commit()
+    await db.refresh(result)
     return result
 
 
-def update_quiz_activity(db: Session, quiz_id: int, is_active: bool) -> bool:
+async def update_quiz_activity(
+        db: AsyncSession,
+        quiz_id: int,
+        is_active: bool
+) -> bool:
     """Активирует/деактивирует квиз"""
-    stmt = (
-        update(Quiz)
-        .where(Quiz.id == quiz_id)
-        .values(is_active=is_active)
-    )
-    result = db.execute(stmt)
-    db.commit()
-    return result.rowcount > 0
+    quiz = await db.get(Quiz, quiz_id)
+    if not quiz:
+        return False
+    quiz.is_active = is_active
+    await db.commit()
+    return True
 
 
-def get_user_results(db: Session, user_id: int) -> list[QuizResult]:
+async def get_user_results(db: AsyncSession, user_id: int) -> List[QuizResult]:
     """Возвращает результаты пользователя"""
     stmt = (
         select(QuizResult)
         .join(Quiz)
         .where(QuizResult.user_id == user_id)
+        .options(selectinload(QuizResult.quiz))
         .order_by(QuizResult.completed_at.desc())
     )
-    return db.scalars(stmt).all()
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_quiz_stats(db: AsyncSession, quiz_id: int) -> dict:
+    """Возвращает статистику квиза"""
+    stmt = select(
+        func.count(QuizResult.id).label("total_attempts"),
+        func.avg(QuizResult.score).label("average_score")
+    ).where(QuizResult.quiz_id == quiz_id)
+
+    result = await db.execute(stmt)
+    stats = result.first()
+
+    return {
+        "total_attempts": stats.total_attempts or 0,
+        "average_score": float(stats.average_score or 0)
+    }

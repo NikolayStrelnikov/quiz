@@ -1,11 +1,12 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_IDS = list(map(int, os.getenv('ADMIN_IDS', '').split(',')))
-DATABASE_URL = 'sqlite:///database/quiz_bot.db'
+DATABASE_URL = "sqlite+aiosqlite:///database/quiz_bot.db"
 
 QUIZ_TEMPLATE = """Название квиза: {quiz_name}
 Описание: {quiz_description}

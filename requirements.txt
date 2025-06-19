@@ -2,3 +2,4 @@ aiogram~=3.20.0
 python-dotenv~=1.1.0
 sqlalchemy~=2.0.41
 alembic~=1.16.2  # для миграций (опционально)
+asyncpg>=0.27  # Для PostgreSQL или aiosqlite для SQLite

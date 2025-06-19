@@ -1,39 +1,37 @@
-from aiogram import Router, F, Dispatcher
-from aiogram.types import CallbackQuery, Message
-from aiogram.fsm.context import FSMContext
+from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.queries import (
     get_quiz_by_id,
     save_quiz_result,
     get_or_create_user
 )
+from handlers.commands import cmd_run
 from keyboards.inline import (
     get_question_keyboard,
     get_quiz_result_keyboard
 )
 from services.quiz_processor import process_quiz
 from states import QuizStates
-from handlers.commands import cmd_run
 
 router = Router()
 
 
-def get_db_from_context(bot):
-    """Получаем db из контекста бота"""
-    if hasattr(bot, "get"):
-        return bot.get("db")
-    return None
-
-
-async def show_question(message: Message, state: FSMContext):
+async def show_question(
+        message: Message,
+        state: FSMContext,
+        db: AsyncSession
+):
     data = await state.get_data()
     current_idx = data["current_question"]
     questions = data["questions"]
 
     if current_idx >= len(questions):
-        await finish_quiz(message, state)
+        await finish_quiz(message, state, db)
         return
 
     question = questions[current_idx]
@@ -44,22 +42,21 @@ async def show_question(message: Message, state: FSMContext):
     )
 
 
-async def finish_quiz(message: Message, state: FSMContext):
+async def finish_quiz(
+        message: Message,
+        state: FSMContext,
+        db: AsyncSession
+):
     data = await state.get_data()
-    db = get_db_from_context(message.bot)
 
-    if not db:
-        await message.answer("❌ Ошибка базы данных")
-        return
-
-    user = get_or_create_user(
+    user = await get_or_create_user(
         db,
         telegram_id=message.from_user.id,
         username=message.from_user.username,
         full_name=message.from_user.full_name
     )
 
-    save_quiz_result(
+    await save_quiz_result(
         db,
         user_id=user.id,
         quiz_id=data["quiz_id"],
@@ -79,15 +76,13 @@ async def finish_quiz(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("quiz_"))
-async def select_quiz_callback(callback: CallbackQuery, state: FSMContext):
+async def select_quiz_callback(
+        callback: CallbackQuery,
+        state: FSMContext,
+        db: AsyncSession
+):
     quiz_id = int(callback.data.split("_")[1])
-    db = get_db_from_context(callback.bot)
-
-    if not db:
-        await callback.answer("⚠️ Ошибка базы данных")
-        return
-
-    quiz = get_quiz_by_id(db, quiz_id)
+    quiz = await get_quiz_by_id(db, quiz_id)
 
     if not quiz:
         await callback.answer("⚠️ Квиз не найден!")
@@ -106,7 +101,7 @@ async def select_quiz_callback(callback: CallbackQuery, state: FSMContext):
             total_questions=len(questions)
         )
 
-        await show_question(callback.message, state)
+        await show_question(callback.message, state, db)
         await callback.answer()
 
     except Exception as e:
@@ -116,7 +111,11 @@ async def select_quiz_callback(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("answer_"), StateFilter(QuizStates.quiz_in_progress))
-async def answer_callback(callback: CallbackQuery, state: FSMContext):
+async def answer_callback(
+        callback: CallbackQuery,
+        state: FSMContext,
+        db: AsyncSession
+):
     selected_option = int(callback.data.split("_")[1])
     data = await state.get_data()
     current_idx = data["current_question"]
@@ -140,14 +139,15 @@ async def answer_callback(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         await callback.answer()
 
-    await show_question(callback.message, state)
+    await show_question(callback.message, state, db)
 
 
 @router.callback_query(F.data == "retry_quiz")
-async def retry_quiz_callback(callback: CallbackQuery, state: FSMContext):
+async def retry_quiz_callback(
+        callback: CallbackQuery,
+        state: FSMContext,
+        db: AsyncSession
+):
     await callback.message.delete()
-    await cmd_run(callback.message, state)
-
-
-def register_callbacks(dp: Dispatcher):
-    dp.include_router(router)
+    # Правильный порядок аргументов: message, state, db
+    await cmd_run(callback.message, state, db)
